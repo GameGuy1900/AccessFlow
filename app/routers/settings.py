@@ -21,6 +21,7 @@ from app.services import (
     plex_oauth,
     plex_service,
     settings_store,
+    stripe_service,
     telegram_service,
 )
 from app.templating import templates
@@ -30,7 +31,7 @@ router = APIRouter()
 _PIN_COOKIE = "plex_setup_pin"
 _PIN_SALT = "plex-setup-pin"
 
-_GROUPS = ("plex", "notifiche", "utenti", "sistema")
+_GROUPS = ("plex", "notifiche", "pagamenti", "utenti", "sistema")
 
 
 def _valid_group(group: str) -> str:
@@ -42,6 +43,7 @@ def _context(session: Session, viewer: AppUser, group: str = "plex", **extra) ->
     smtp = runtime_config.smtp_config()
     tg = runtime_config.telegram_config()
     ov = runtime_config.overseerr_config()
+    stripe = runtime_config.stripe_config()
     sched = runtime_config.reminder_schedule()
     sections = []
     if plex["token"] and plex["server_name"]:
@@ -75,6 +77,10 @@ def _context(session: Session, viewer: AppUser, group: str = "plex", **extra) ->
         "telegram_bot_match": (
             overseerr_service.bot_match() if ov["enabled"] else {"checked": False}
         ),
+        "stripe_enabled": stripe["enabled"],
+        "stripe_key_set": bool(stripe["secret_key"]),
+        "stripe_webhook_secret_set": bool(stripe["webhook_secret"]),
+        "stripe_reminder_days_before": stripe["reminder_days_before"],
         "message": None,
         "error": None,
     }
@@ -487,6 +493,55 @@ def save_overseerr(
         settings_store.set_value(session, "overseerr_api_key", overseerr_api_key)
     audit.record(session, viewer.id, "settings_overseerr")
     return RedirectResponse("/settings?group=plex", status_code=303)
+
+
+# ---- Stripe ----
+
+@router.post("/settings/stripe")
+def save_stripe(
+    stripe_secret_key: str = Form(""),
+    stripe_webhook_secret: str = Form(""),
+    stripe_reminder_days_before: str = Form("3"),
+    stripe_enabled: str = Form("false"),
+    viewer: AppUser = Depends(_admin),
+    session: Session = Depends(get_session),
+):
+    settings_store.set_value(
+        session, "stripe_enabled", "true" if stripe_enabled == "on" else "false"
+    )
+    if stripe_reminder_days_before.isdigit():
+        days = max(1, min(90, int(stripe_reminder_days_before)))
+        settings_store.set_value(session, "stripe_reminder_days_before", str(days))
+    if stripe_secret_key:  # blank keeps existing key
+        settings_store.set_value(session, "stripe_secret_key", stripe_secret_key)
+    if stripe_webhook_secret:  # blank keeps existing secret
+        settings_store.set_value(session, "stripe_webhook_secret", stripe_webhook_secret)
+    audit.record(session, viewer.id, "settings_stripe")
+    return RedirectResponse("/settings?group=pagamenti", status_code=303)
+
+
+@router.post("/settings/stripe/test", response_class=HTMLResponse)
+def test_stripe(
+    request: Request,
+    viewer: AppUser = Depends(_admin),
+    session: Session = Depends(get_session),
+):
+    try:
+        stripe_service.test()
+        result = {"ok": True, "text": _("Connection OK and secret key valid.")}
+    except stripe_service.StripeConnectionError as exc:
+        result = {"ok": False, "text": _("Stripe API unreachable. (%s)") % exc}
+    except stripe_service.StripeKeyError as exc:
+        result = {
+            "ok": False,
+            "text": _("Stripe API reached but the secret key was rejected. (%s)") % exc,
+        }
+    except Exception as exc:  # noqa: BLE001
+        result = {"ok": False, "text": _("Stripe test failed: %s") % exc}
+    return templates.TemplateResponse(
+        request, "settings.html",
+        _context(session, viewer, group="pagamenti", stripe_test=result),
+    )
 
 
 # ---- Encryption key rotation ----

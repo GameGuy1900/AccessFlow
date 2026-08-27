@@ -10,7 +10,7 @@ from app.auth.deps import require_capability, require_user
 from app.db import get_session
 from app.models import AppUser, Plan, Renewal, RenewalStatus, Role, Subscription
 from app.permissions import Capability, has_capability
-from app.services import audit, notifications
+from app.services import audit, notifications, stripe_service
 from app.services import subscriptions as sub_svc
 from app.services import users as users_svc
 from app.templating import templates
@@ -44,6 +44,7 @@ def subscription_detail(
     sub = sub_svc.get_active_subscription(session, target.id)
     plan = session.get(Plan, sub.plan_id) if sub else None
     renewals = sub_svc.list_renewals(session, sub.id) if sub else []
+    pending_renewal = sub_svc.get_pending_renewal(session, sub.id) if sub else None
     # Acting on the sub (plan/renew/remind/access) requires hierarchy rights;
     # nobody manages their own plan (except the superadmin owner).
     can_manage = (
@@ -99,6 +100,8 @@ def subscription_detail(
             "sub": sub,
             "plan": plan,
             "renewals": renewals,
+            "pending_renewal": pending_renewal,
+            "stripe_enabled": stripe_service.enabled(),
             "plans": plans,
             "can_renew": can_renew,
             "can_remind": can_remind,
@@ -354,6 +357,50 @@ def create_renewal(
     audit.record(
         session, viewer.id, "create_renewal", "subscription", sub_id,
         {"periods": max(1, periods)},
+    )
+    return RedirectResponse(
+        f"/users/{sub.user_id}/subscription", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.post("/subscriptions/{sub_id}/stripe-link")
+def create_stripe_link(
+    sub_id: int,
+    periods: int = Form(1),
+    viewer: AppUser = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    if not stripe_service.enabled():
+        raise HTTPException(status_code=400, detail="Stripe is not enabled")
+    sub = session.get(Subscription, sub_id)
+    target = _load_sub_for_renew(session, viewer, sub)
+
+    renewal = sub_svc.get_pending_renewal(session, sub_id)
+    if renewal is None:
+        try:
+            renewal = sub_svc.create_renewal(
+                session, sub, actor_id=viewer.id, collected_by=target.manager_id,
+                periods=periods,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    if not renewal.stripe_payment_link_url:
+        plan = session.get(Plan, renewal.plan_id)
+        currency = runtime_config.currency()["code"] or "EUR"
+        link = stripe_service.create_payment_link(
+            amount_cents=renewal.amount_cents,
+            currency=currency,
+            description=f"{plan.name} — {target.real_name}" if plan else target.real_name,
+            metadata={"type": "renewal", "renewal_id": str(renewal.id)},
+        )
+        renewal.stripe_payment_link_id = link["id"]
+        renewal.stripe_payment_link_url = link["url"]
+        session.add(renewal)
+        session.commit()
+
+    audit.record(
+        session, viewer.id, "create_stripe_link", "renewal", renewal.id,
     )
     return RedirectResponse(
         f"/users/{sub.user_id}/subscription", status_code=status.HTTP_303_SEE_OTHER

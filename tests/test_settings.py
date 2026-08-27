@@ -175,3 +175,51 @@ def test_plex_select_and_disconnect(client, db_session, login_as):
     client.post("/settings/plex/disconnect")
     assert runtime_config.plex_config()["token"] == ""
     assert runtime_config.plex_config()["server_name"] == ""
+
+
+# ---- Stripe ----
+
+def test_save_stripe_keeps_key_when_blank(client, db_session, login_as):
+    login_as(client, _superadmin(db_session).id)
+    client.post(
+        "/settings/stripe",
+        data={
+            "stripe_secret_key": "sk_test_1",
+            "stripe_webhook_secret": "whsec_1",
+            "stripe_reminder_days_before": "5",
+            "stripe_enabled": "on",
+        },
+    )
+    client.post(
+        "/settings/stripe",
+        data={"stripe_secret_key": "", "stripe_webhook_secret": "", "stripe_reminder_days_before": "5"},
+    )
+    assert settings_store.get_value(db_session, "stripe_secret_key") == "sk_test_1"
+    assert settings_store.get_value(db_session, "stripe_webhook_secret") == "whsec_1"
+    # Second POST omitted stripe_enabled -> defaults to "false" (checkbox unchecked).
+    assert runtime_config.stripe_config()["enabled"] is False
+
+
+def test_save_stripe_clamps_reminder_days(client, db_session, login_as):
+    login_as(client, _superadmin(db_session).id)
+    client.post("/settings/stripe", data={"stripe_reminder_days_before": "999"})
+    assert runtime_config.stripe_config()["reminder_days_before"] == 90
+    client.post("/settings/stripe", data={"stripe_reminder_days_before": "0"})
+    assert runtime_config.stripe_config()["reminder_days_before"] == 1
+
+
+def test_stripe_test_route_reports_missing_key(client, db_session, login_as):
+    login_as(client, _superadmin(db_session).id)
+    resp = client.post("/settings/stripe/test")
+    assert resp.status_code == 200
+    assert "✗" in resp.text  # no key configured -> failure banner
+
+
+def test_stripe_test_route_ok(client, db_session, login_as, monkeypatch):
+    import app.services.stripe_service as stripe_service
+
+    login_as(client, _superadmin(db_session).id)
+    client.post("/settings/stripe", data={"stripe_secret_key": "sk_test_1", "stripe_enabled": "on"})
+    monkeypatch.setattr(stripe_service, "test", lambda: {"object": "balance"})
+    resp = client.post("/settings/stripe/test")
+    assert resp.status_code == 200

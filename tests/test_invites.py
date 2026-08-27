@@ -9,6 +9,7 @@ from app.models import (
     Renewal,
     RenewalStatus,
     Role,
+    utcnow,
 )
 from app.services import subscriptions as sub_svc
 
@@ -202,3 +203,105 @@ def test_activation_ff_no_renewal(client, db_session, monkeypatch):
         ).first()
         is None
     )
+
+
+# ---- Stripe payment link on invites ----
+
+def _enable_stripe(session):
+    from app.services import settings_store
+
+    settings_store.set_value(session, "stripe_secret_key", "sk_test_1")
+    settings_store.set_value(session, "stripe_enabled", "true")
+
+
+def test_create_invite_stripe_link(client, db_session, login_as, monkeypatch):
+    import app.services.stripe_service as stripe_service
+
+    _enable_stripe(db_session)
+    admin = _mk(db_session, Role.admin, "PayAdmin")
+    bronze = _plan(db_session, "bronze")
+    inv = Invite(
+        email="pay@example.com", real_name="Pay Person", plan_id=bronze.id,
+        token="t-pay",
+    )
+    db_session.add(inv)
+    db_session.commit()
+    db_session.refresh(inv)
+
+    monkeypatch.setattr(
+        stripe_service, "create_payment_link",
+        lambda **kw: {"id": "plink_1", "url": "https://buy.stripe.com/plink_1"},
+    )
+    login_as(client, admin.id)
+    resp = client.post(f"/invites/{inv.id}/stripe-link", follow_redirects=False)
+    assert resp.status_code == 303
+    db_session.commit()
+    db_session.refresh(inv)
+    assert inv.stripe_payment_link_id == "plink_1"
+    assert inv.stripe_payment_link_url == "https://buy.stripe.com/plink_1"
+
+
+def test_create_invite_stripe_link_rejects_unpayable_plan(client, db_session, login_as, monkeypatch):
+    import app.services.stripe_service as stripe_service
+
+    _enable_stripe(db_session)
+    admin = _mk(db_session, Role.admin, "PayAdmin2")
+    trial_plan = _plan(db_session, "trial")
+    inv = Invite(
+        email="trial@example.com", real_name="Trial Person",
+        plan_id=trial_plan.id, token="t-trial",
+    )
+    db_session.add(inv)
+    db_session.commit()
+    db_session.refresh(inv)
+
+    monkeypatch.setattr(
+        stripe_service, "create_payment_link",
+        lambda **kw: (_ for _ in ()).throw(AssertionError("should not be called")),
+    )
+    login_as(client, admin.id)
+    resp = client.post(f"/invites/{inv.id}/stripe-link", follow_redirects=False)
+    assert resp.status_code == 400
+
+
+def test_create_invite_stripe_link_disabled(client, db_session, login_as):
+    admin = _mk(db_session, Role.admin, "PayAdmin3")
+    bronze = _plan(db_session, "bronze")
+    inv = Invite(
+        email="pay2@example.com", real_name="Pay Person 2", plan_id=bronze.id,
+        token="t-pay2",
+    )
+    db_session.add(inv)
+    db_session.commit()
+    db_session.refresh(inv)
+    login_as(client, admin.id)
+    resp = client.post(f"/invites/{inv.id}/stripe-link", follow_redirects=False)
+    assert resp.status_code == 400
+
+
+def test_activation_settles_prepaid_invite(client, db_session, monkeypatch):
+    """An invite paid via its Stripe link before the invitee accepts on Plex ->
+    the first renewal is created already paid, not left pending."""
+    bronze = _plan(db_session, "bronze")
+    inv = Invite(
+        email="prepaid@example.com", real_name="Prepaid User",
+        intended_role=Role.user, plan_id=bronze.id, token="t-prepaid",
+        stripe_paid_at=utcnow(),
+    )
+    db_session.add(inv)
+    db_session.commit()
+
+    resp = _activate_via_plex(client, db_session, monkeypatch, "prepaid@example.com", acc_id="502")
+    assert resp.status_code == 303
+    db_session.commit()
+
+    user = db_session.exec(
+        select(AppUser).where(AppUser.plex_email == "prepaid@example.com")
+    ).one()
+    sub = sub_svc.get_active_subscription(db_session, user.id)
+    renewals = db_session.exec(
+        select(Renewal).where(Renewal.subscription_id == sub.id)
+    ).all()
+    assert len(renewals) == 1
+    assert renewals[0].status == RenewalStatus.paid
+    assert renewals[0].causale == "Stripe (pre-paid at invite)"

@@ -380,6 +380,94 @@ def notify_expiry_manual(session: Session, sub: Subscription) -> int:
     return sent
 
 
+# ---- Stripe: auto-send a payment link X days before expiry (admin threshold) ----
+
+def _payment_link_ctx(user: AppUser, plan: Plan, sub: Subscription, days: int,
+                       payment_url: str) -> dict:
+    return {
+        "name": user.real_name,
+        "plan_name": plan.name,
+        "expiry_date": sub.expiry_at.date().isoformat(),
+        "days": days,
+        "amount_eur": _amount_eur(plan),
+        "payment_url": payment_url,
+    }
+
+
+def send_payment_links(session: Session, today: datetime | None = None) -> int:
+    """Auto-send a Stripe payment link once per renewal, `reminder_days_before`
+    days before expiry (Settings -> Payments). No-op when Stripe is disabled.
+
+    Reuses/creates the pending renewal exactly like the manual "Create payment
+    link" button, then sends it through the existing email/Telegram pipeline.
+    Dedup is keyed on the renewal id (not the day), so the link is sent exactly
+    once per renewal and never re-sent while it stays pending — by design, a
+    fresh renewal only appears again next cycle, after this one is paid."""
+    from app import runtime_config
+    from app.services import stripe_service
+    from app.services import subscriptions as sub_svc
+
+    if not stripe_service.enabled():
+        return 0
+    threshold = runtime_config.stripe_config()["reminder_days_before"]
+    currency = runtime_config.currency()["code"] or "EUR"
+    now = (today or utcnow()).date()
+    sent = 0
+    subs = session.exec(
+        select(Subscription).where(Subscription.status == SubscriptionStatus.active)
+    ).all()
+    for sub in subs:
+        if sub.expiry_at is None:
+            continue
+        days_left = (sub.expiry_at.date() - now).days
+        if not (0 <= days_left <= threshold):
+            continue
+        plan = session.get(Plan, sub.plan_id)
+        if plan is None or not plan.is_paid or plan.is_trial or plan.is_unlimited:
+            continue
+        user = session.get(AppUser, sub.user_id)
+        if user is None:
+            continue
+
+        renewal = sub_svc.get_pending_renewal(session, sub.id)
+        if renewal is None:
+            try:
+                renewal = sub_svc.create_renewal(
+                    session, sub, actor_id=None, collected_by=user.manager_id,
+                )
+            except ValueError:
+                continue
+
+        if not renewal.stripe_payment_link_url:
+            try:
+                link = stripe_service.create_payment_link(
+                    amount_cents=renewal.amount_cents,
+                    currency=currency,
+                    description=f"{plan.name} — {user.real_name}",
+                    metadata={"type": "renewal", "renewal_id": str(renewal.id)},
+                )
+            except Exception as exc:  # noqa: BLE001 - a Stripe hiccup for one user
+                # must not abort the scan for everyone else; retried next run.
+                log.warning("stripe payment link creation failed (sub=%s): %s",
+                            sub.id, exc)
+                continue
+            renewal.stripe_payment_link_id = link["id"]
+            renewal.stripe_payment_link_url = link["url"]
+            session.add(renewal)
+            session.commit()
+
+        ctx = _payment_link_ctx(user, plan, sub, days_left, renewal.stripe_payment_link_url)
+        sent += _send_email(
+            session, recipient=user, sub_id=sub.id, ntype=NotificationType.payment_link,
+            type_="payment_link", dedup_key=f"paylink:{renewal.id}:email", ctx=ctx,
+        )
+        sent += _send_telegram(
+            session, recipient=user, sub_id=sub.id, ntype=NotificationType.payment_link,
+            type_="payment_link", dedup_key=f"paylink:{renewal.id}:telegram", ctx=ctx,
+        )
+    return sent
+
+
 # ---- Retention: prune old notification_log rows (admin-configured) ----
 
 def prune_old_notifications(session: Session, today: datetime | None = None) -> int:

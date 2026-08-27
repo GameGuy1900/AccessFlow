@@ -11,6 +11,7 @@
   <div class="notif-tabs" role="tablist">
     <a href="/settings?group=plex" class="notif-tab {% if group == 'plex' %}active{% endif %}">{{ _("Plex & Overseerr") }}</a>
     <a href="/settings?group=notifiche" class="notif-tab {% if group == 'notifiche' %}active{% endif %}">{{ _("Notifications") }}</a>
+    <a href="/settings?group=pagamenti" class="notif-tab {% if group == 'pagamenti' %}active{% endif %}">{{ _("Payments") }}</a>
     <a href="/settings?group=utenti" class="notif-tab {% if group == 'utenti' %}active{% endif %}">{{ _("Users") }}</a>
     <a href="/settings?group=sistema" class="notif-tab {% if group == 'sistema' %}active{% endif %}">{{ _("System") }}</a>
   </div>
@@ -215,6 +216,46 @@
       </label>
       <button type="submit" class="btn-primary">{{ _("Save retention") }}</button>
     </form>
+  </article>
+  {% endif %}
+
+  {% if group == 'pagamenti' %}
+  <article class="settings-card">
+    <div class="flex items-center gap-2 mb-4">
+      <span class="material-symbols-outlined text-primary-container" aria-hidden="true">credit_card</span>
+      <h3 class="text-lg font-semibold text-on-surface m-0">Stripe</h3>
+    </div>
+    <form method="post" action="/settings/stripe" class="space-y-4">
+      <label class="toggle-switch gap-3">
+        <input type="checkbox" name="stripe_enabled" class="toggle-switch__input peer" {% if stripe_enabled %}checked{% endif %}>
+        <span class="toggle-switch__track"></span>
+        <span class="toggle-switch__thumb"></span>
+        <span class="text-on-surface">{{ _("Enable integration") }}</span>
+      </label>
+      <label class="form-label">
+        {{ _("Secret key") }}
+        <input name="stripe_secret_key" type="password" autocomplete="off" placeholder="{{ '••••• ' + _('(set)') if stripe_key_set else 'sk_live_...' }}" class="form-input">
+      </label>
+      <label class="form-label">
+        {{ _("Webhook signing secret") }}
+        <input name="stripe_webhook_secret" type="password" autocomplete="off" placeholder="{{ '••••• ' + _('(set)') if stripe_webhook_secret_set else 'whsec_...' }}" class="form-input">
+        <small class="block mt-1 text-xs font-normal text-on-surface-variant">{{ _("From the Stripe Dashboard webhook endpoint pointed at") }} <code>{PUBLIC_URL}/webhooks/stripe</code></small>
+      </label>
+      <label class="form-label max-w-xs">
+        {{ _("Send payment link (days before expiry)") }}
+        <input name="stripe_reminder_days_before" type="number" min="1" max="90" value="{{ stripe_reminder_days_before }}" class="form-input">
+        <small class="block mt-1 text-xs font-normal text-on-surface-variant">{{ _("A daily job auto-creates and sends a payment link once, this many days before a paid subscription expires.") }}</small>
+      </label>
+      <button type="submit" class="btn-primary">{{ _("Save Stripe") }}</button>
+    </form>
+    <form method="post" action="/settings/stripe/test" class="mt-3">
+      <button type="submit" class="rounded-lg border border-outline-variant text-on-surface px-4 py-2 font-medium hover:bg-surface-container-high transition-colors">{{ _("Test Stripe") }}</button>
+    </form>
+    {% if stripe_test %}
+    <p class="mt-3 rounded-lg px-4 py-3 font-semibold border-l-4 {{ 'border-status-active text-status-active bg-status-active/10' if stripe_test.ok else 'border-status-expired text-status-expired bg-status-expired/10' }}">
+      {{ '✓' if stripe_test.ok else '✗' }} {{ stripe_test.text }}
+    </p>
+    {% endif %}
   </article>
   {% endif %}
 

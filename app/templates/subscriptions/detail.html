@@ -231,6 +231,35 @@
 </div>
 {% endif %}
 
+{% if can_renew and stripe_enabled %}
+<div class="rounded-xl bg-surface-container border border-outline-variant p-6 cinematic-shadow mb-gap-lg">
+  <h3 class="flex items-center gap-2 text-lg font-semibold text-on-surface mb-gap-md">
+    <span class="material-symbols-outlined text-[20px] text-on-surface-variant" aria-hidden="true">credit_card</span>
+    {{ _("Stripe payment link") }}
+  </h3>
+  {% if pending_renewal and pending_renewal.stripe_payment_link_url %}
+  <div class="flex flex-wrap items-center gap-gap-sm">
+    <input type="text" readonly value="{{ pending_renewal.stripe_payment_link_url }}" onclick="this.select()"
+           class="flex-1 min-w-[16rem] rounded-lg border border-outline-variant bg-surface-container-low px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary">
+    <a href="{{ pending_renewal.stripe_payment_link_url }}" target="_blank" rel="noopener"
+       class="inline-flex items-center justify-center gap-2 rounded-lg border border-outline-variant px-4 py-2 font-medium text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface no-underline">{{ _("Open") }}</a>
+  </div>
+  <small class="block text-xs text-on-surface-variant mt-2">{{ _("Pending renewal for %(amount)s — this link stays valid until it's paid.") % {'amount': pending_renewal.amount_cents|euros} }}</small>
+  {% else %}
+  <form method="post" action="/subscriptions/{{ sub.id }}/stripe-link" class="flex flex-wrap items-end gap-gap-sm">
+    {% if not pending_renewal %}
+    <label class="flex flex-col gap-1 text-sm font-medium text-on-surface-variant">
+      {{ _("Periods") }}
+      <input type="number" name="periods" min="1" max="60" step="1" value="1"
+             class="mt-1 w-28 rounded-lg border border-outline-variant bg-surface-container-low px-3 py-2 text-on-surface focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary">
+    </label>
+    {% endif %}
+    <button type="submit" class="inline-flex items-center justify-center gap-2 rounded-lg bg-primary-container px-5 py-2.5 font-semibold text-on-primary transition-colors hover:bg-primary">{{ _("Create payment link") }}</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+
 {% if can_remind %}
 <div class="rounded-xl bg-surface-container border border-outline-variant p-6 cinematic-shadow mb-gap-lg">
   <h3 class="flex items-center gap-2 text-lg font-semibold text-on-surface mb-gap-md">

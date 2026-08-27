@@ -90,15 +90,37 @@
 <table class="responsive w-full text-left border-collapse">
   <thead>
     <tr class="border-b border-outline-variant text-on-surface-variant text-xs uppercase tracking-wide">
-      <th class="px-4 py-3">{{ _("Email") }}</th><th class="px-4 py-3">{{ _("Real name") }}</th><th class="px-4 py-3">{{ _("Role") }}</th><th class="px-4 py-3">{{ _("Sent") }}</th><th class="px-4 py-3"></th>
+      <th class="px-4 py-3">{{ _("Email") }}</th><th class="px-4 py-3">{{ _("Real name") }}</th><th class="px-4 py-3">{{ _("Role") }}</th><th class="px-4 py-3">{{ _("Sent") }}</th>{% if stripe_enabled %}<th class="px-4 py-3">{{ _("Payment") }}</th>{% endif %}<th class="px-4 py-3"></th>
     </tr>
   </thead>
   <tbody>
     {% set ROLE_BADGE = {'superadmin': 'suspended', 'admin': 'suspended', 'moderator': 'active', 'user': 'cancelled'} %}
     {% for i in pending %}
+    {% set i_plan = plan_by_id.get(i.plan_id) if i.plan_id else none %}
     <tr class="border-b border-outline-variant last:border-0 hover:bg-surface-container/60">
       <td class="px-4 py-3" data-label="{{ _('Email') }}">{{ i.email }}</td><td class="px-4 py-3" data-label="{{ _('Real name') }}">{{ i.real_name }}</td>
       <td class="px-4 py-3" data-label="{{ _('Role') }}"><span class="badge badge--{{ ROLE_BADGE.get(i.intended_role.value, 'cancelled') }}">{{ i.intended_role.value }}</span></td><td class="px-4 py-3" data-label="{{ _('Sent') }}">{{ i.plex_invite_sent_at | date }}</td>
+      {% if stripe_enabled %}
+      <td class="px-4 py-3" data-label="{{ _('Payment') }}">
+        {% if i.stripe_payment_link_url %}
+        <div class="flex flex-wrap items-center gap-gap-sm">
+          <input type="text" readonly value="{{ i.stripe_payment_link_url }}" onclick="this.select()"
+                 class="w-40 rounded-lg border border-outline-variant bg-surface-container-low px-2 py-1 text-xs text-on-surface focus:outline-none focus:ring-2 focus:ring-primary">
+          <a href="{{ i.stripe_payment_link_url }}" target="_blank" rel="noopener"
+             class="btn-sm border border-outline-variant text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface no-underline">{{ _("Open") }}</a>
+        </div>
+        {% elif i_plan and i_plan.is_paid and not i_plan.is_trial and not i_plan.is_unlimited %}
+        <form method="post" action="/invites/{{ i.id }}/stripe-link" class="m-0">
+          <button type="submit" class="btn-sm bg-primary-container text-on-primary font-semibold hover:bg-primary transition-colors inline-flex items-center gap-1">
+            <span class="material-symbols-outlined text-[16px] leading-none" aria-hidden="true">credit_card</span>
+            {{ _("Create payment link") }}
+          </button>
+        </form>
+        {% else %}
+        <span class="text-on-surface-variant text-xs">—</span>
+        {% endif %}
+      </td>
+      {% endif %}
       <td class="px-4 py-3" data-label="">
         <div class="row-actions">
           <form method="post" action="/invites/{{ i.id }}/delete"

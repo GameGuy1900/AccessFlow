@@ -146,6 +146,28 @@ def _load_overseerr() -> dict:
     }
 
 
+def stripe_config() -> dict:
+    return _cached("stripe", _load_stripe)
+
+
+def _load_stripe() -> dict:
+    with Session(engine) as session:
+        secret_key = settings_store.get_value(session, "stripe_secret_key")
+        webhook_secret = settings_store.get_value(session, "stripe_webhook_secret")
+        enabled = settings_store.get_value(session, "stripe_enabled")
+        reminder_days = settings_store.get_value(session, "stripe_reminder_days_before")
+    try:
+        days = int(reminder_days) if reminder_days else 3
+    except (ValueError, TypeError):
+        days = 3
+    return {
+        "secret_key": secret_key or "",
+        "webhook_secret": webhook_secret or "",
+        "enabled": enabled == "true",
+        "reminder_days_before": max(1, min(90, days)),
+    }
+
+
 def plex_default_sections() -> list[str]:
     return _cached("plex_default_sections", _load_plex_default_sections)
 

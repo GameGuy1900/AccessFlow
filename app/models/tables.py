@@ -117,6 +117,13 @@ class Renewal(SQLModel, table=True):
     collected_by: int | None = Field(default=None, foreign_key="app_user.id")
     created_at: datetime = Field(default_factory=utcnow)
 
+    # Stripe Payment Link generated for this renewal (manually via the "Create
+    # payment link" button, or automatically by the pre-expiry reminder job).
+    # One link per renewal — never regenerated once set, so only one valid
+    # charge URL for the same amount ever exists at a time.
+    stripe_payment_link_id: str | None = Field(default=None, index=True)
+    stripe_payment_link_url: str | None = None
+
 
 class NotificationLog(SQLModel, table=True):
     __tablename__ = "notification_log"
@@ -164,6 +171,15 @@ class Invite(SQLModel, table=True):
     plex_invite_sent_at: datetime | None = None
     created_by: int | None = Field(default=None, foreign_key="app_user.id")
     created_at: datetime = Field(default_factory=utcnow)
+
+    # Stripe Payment Link for the invite's plan price, generated on-demand so
+    # the invitee can pay before/independent of accepting the Plex invite.
+    # No Subscription/Renewal exists yet at this point, so payment is tracked
+    # here; on_user_activated() marks the first renewal paid automatically if
+    # stripe_paid_at is set by the time the invite is accepted.
+    stripe_payment_link_id: str | None = Field(default=None, index=True)
+    stripe_payment_link_url: str | None = None
+    stripe_paid_at: datetime | None = None
 
 
 class AppSetting(SQLModel, table=True):

@@ -21,6 +21,7 @@ from app.routers import audit as audit_router
 from app.routers import profile as profile_router
 from app.routers import reports as reports_router
 from app.routers import settings as settings_router
+from app.routers import stripe_webhook as stripe_webhook_router
 from app.routers import subscriptions as subscriptions_router
 from app.routers import tutorial as tutorial_router
 from app.routers import users as users_router
@@ -218,6 +219,7 @@ def create_app() -> FastAPI:
     app.include_router(profile_router.router)
     app.include_router(audit_router.router)
     app.include_router(tutorial_router.router)
+    app.include_router(stripe_webhook_router.router)
 
     @app.get("/healthz")
     def healthz(request: Request):
