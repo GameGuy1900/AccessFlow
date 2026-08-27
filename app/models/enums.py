@@ -35,6 +35,7 @@ class NotificationType(str, enum.Enum):
     manager_digest = "manager_digest"  # weekly cumulative collect digest
     broadcast = "broadcast"
     welcome = "welcome"
+    payment_link = "payment_link"  # auto-sent Stripe payment link before expiry
 
 
 class NotificationChannel(str, enum.Enum):

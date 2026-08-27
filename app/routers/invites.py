@@ -2,17 +2,17 @@
 import json
 import secrets
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlmodel import Session, select
 
 from app.auth.deps import require_capability
 from app.db import get_session
 from app.i18n import gettext as _
-from app.models import AppUser, Invite, InviteStatus, Role, utcnow
+from app.models import AppUser, Invite, InviteStatus, Plan, Role, utcnow
 from app.permissions import Capability, outranks
 from app import runtime_config
-from app.services import audit, plex_service
+from app.services import audit, plex_service, stripe_service
 from app.services import subscriptions as sub_svc
 from app.services import users as users_svc
 from app.templating import templates
@@ -49,9 +49,11 @@ def _render(request, viewer, session, error=None, status_code=200):
             "pending": pending,
             "candidates": users_svc.manager_candidates(session),
             "plans": sub_svc.list_plans(session),
+            "plan_by_id": {p.id: p for p in sub_svc.list_plans(session, only_active=False)},
             "roles": _invitable_roles(viewer),
             "sections": plex_service.list_sections_safe(),
             "default_sections": runtime_config.plex_default_sections(),
+            "stripe_enabled": stripe_service.enabled(),
             "error": error,
         },
         status_code=status_code,
@@ -149,4 +151,40 @@ def delete_invite(
     session.delete(invite)
     session.commit()
     audit.record(session, viewer.id, "delete_invite", "invite", invite_id, {"email": email})
+    return RedirectResponse("/invites", status_code=303)
+
+
+@router.post("/invites/{invite_id}/stripe-link")
+def create_invite_stripe_link(
+    invite_id: int,
+    viewer: AppUser = Depends(require_capability(Capability.invite_user)),
+    session: Session = Depends(get_session),
+):
+    """Generate a Stripe Payment Link priced off the invite's chosen plan, so
+    the invitee can pay before/independent of accepting the Plex invite.
+    No Subscription/Renewal exists yet — on_user_activated() applies the
+    payment to the first renewal automatically once the invite is accepted."""
+    if not stripe_service.enabled():
+        raise HTTPException(status_code=400, detail="Stripe is not enabled")
+    invite = session.get(Invite, invite_id)
+    if invite is None or invite.status != InviteStatus.pending:
+        raise HTTPException(status_code=404)
+    plan = session.get(Plan, invite.plan_id) if invite.plan_id else None
+    if plan is None or not plan.is_paid or plan.is_trial or plan.is_unlimited:
+        raise HTTPException(status_code=400, detail="Invite has no payable plan")
+
+    if not invite.stripe_payment_link_url:
+        currency = runtime_config.currency()["code"] or "EUR"
+        link = stripe_service.create_payment_link(
+            amount_cents=plan.price_cents,
+            currency=currency,
+            description=f"{plan.name} — {invite.real_name}",
+            metadata={"type": "invite", "invite_id": str(invite.id)},
+        )
+        invite.stripe_payment_link_id = link["id"]
+        invite.stripe_payment_link_url = link["url"]
+        session.add(invite)
+        session.commit()
+
+    audit.record(session, viewer.id, "create_invite_stripe_link", "invite", invite_id)
     return RedirectResponse("/invites", status_code=303)

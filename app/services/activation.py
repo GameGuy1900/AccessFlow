@@ -18,9 +18,17 @@ def on_user_activated(session: Session, user: AppUser, invite: Invite) -> None:
         )
         # First renewal (pending) only for paid, non-trial, non-unlimited plans.
         if plan.is_paid and not plan.is_trial and not plan.is_unlimited:
-            sub_svc.create_renewal(
+            renewal = sub_svc.create_renewal(
                 session, sub, actor_id=None, collected_by=user.manager_id
             )
+            # Invitee already paid via the invite's Stripe link before accepting
+            # -> settle this first renewal immediately instead of leaving it
+            # pending (no Renewal existed yet when that webhook fired).
+            if invite.stripe_paid_at is not None:
+                sub_svc.mark_renewal_paid(
+                    session, renewal, causale="Stripe (pre-paid at invite)",
+                    paid_at=invite.stripe_paid_at,
+                )
         # One-time welcome / onboarding notification (idempotent via notification_log).
         # Wrapped: a notification failure must never abort first-login activation.
         try:

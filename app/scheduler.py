@@ -18,6 +18,7 @@ def _run_expiry_scan() -> None:
         prune_old_notifications,
         run_expiry_scan,
         run_manager_digests,
+        send_payment_links,
     )
 
     log = logging.getLogger("pum.scheduler")
@@ -26,6 +27,10 @@ def _run_expiry_scan() -> None:
     stages = (
         # Send reminders + flip lapsed subs to `expired`.
         ("expiry_scan", run_expiry_scan),
+        # Auto-send a Stripe payment link once per renewal, X days before expiry
+        # (no-op when Stripe is off). Runs after expiry_scan so it sees today's
+        # up-to-date sub statuses.
+        ("stripe_payment_links", send_payment_links),
         # Auto-suspend users expired beyond their grace period (Plex + Overseerr).
         ("reconcile", reconcile_all),
         # Re-apply configured libraries to active users (propagates plan/default

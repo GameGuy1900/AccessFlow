@@ -8,6 +8,7 @@ from app.models import (
     AppUser,
     NotificationLog,
     Plan,
+    Renewal,
     Role,
     Subscription,
     SubscriptionStatus,
@@ -273,3 +274,103 @@ def test_user_opts_out_of_telegram(db_session, monkeypatch):
     notif.notify_expiry(db_session, sub, 3)
     assert sent["email"] == ["notg@example.com"]
     assert sent["tg"] == []
+
+
+# ---- Stripe: auto-send payment link before expiry ----
+
+def _enable_stripe(session, days_before="3"):
+    from app.services import settings_store
+
+    settings_store.set_value(session, "stripe_secret_key", "sk_test_1")
+    settings_store.set_value(session, "stripe_enabled", "true")
+    settings_store.set_value(session, "stripe_reminder_days_before", days_before)
+
+
+def test_send_payment_links_noop_when_disabled(db_session):
+    user = _user(db_session, "NoStripe", plex_email="nostripe@example.com")
+    _sub(db_session, user, _plan(db_session, "bronze"), 2)
+    assert notif.send_payment_links(db_session) == 0
+
+
+def test_send_payment_links_creates_renewal_and_sends_once(db_session, monkeypatch):
+    import app.services.stripe_service as stripe_service
+
+    _enable_stripe(db_session, days_before="3")
+    sent = _capture(monkeypatch)
+    calls = {"n": 0}
+
+    def _create(**kw):
+        calls["n"] += 1
+        return {"id": "plink_x", "url": "https://buy.stripe.com/plink_x"}
+
+    monkeypatch.setattr(stripe_service, "create_payment_link", _create)
+    user = _user(
+        db_session, "PayMe", plex_email="payme@example.com", telegram_id="777",
+    )
+    sub = _sub(db_session, user, _plan(db_session, "bronze"), 2)  # within threshold
+
+    assert notif.send_payment_links(db_session) == 2  # email + telegram
+    renewal = db_session.exec(
+        select(Renewal).where(Renewal.subscription_id == sub.id)
+    ).one()
+    assert renewal.stripe_payment_link_url == "https://buy.stripe.com/plink_x"
+    assert calls["n"] == 1
+
+    # Second run: still pending, same renewal -> link not regenerated, message
+    # not re-sent (dedup keyed on the renewal id, "send once" per product decision).
+    assert notif.send_payment_links(db_session) == 0
+    assert calls["n"] == 1
+    assert len(sent["email"]) == 1
+    assert len(sent["tg"]) == 1
+
+
+def test_send_payment_links_ignores_subs_outside_threshold(db_session, monkeypatch):
+    import app.services.stripe_service as stripe_service
+
+    _enable_stripe(db_session, days_before="3")
+    monkeypatch.setattr(
+        stripe_service, "create_payment_link",
+        lambda **kw: (_ for _ in ()).throw(AssertionError("should not be called")),
+    )
+    user = _user(db_session, "TooEarly", plex_email="tooearly@example.com")
+    _sub(db_session, user, _plan(db_session, "bronze"), 10)  # beyond threshold
+    assert notif.send_payment_links(db_session) == 0
+
+
+def test_send_payment_links_skips_trial_and_unlimited(db_session, monkeypatch):
+    import app.services.stripe_service as stripe_service
+
+    _enable_stripe(db_session, days_before="3")
+    monkeypatch.setattr(
+        stripe_service, "create_payment_link",
+        lambda **kw: (_ for _ in ()).throw(AssertionError("should not be called")),
+    )
+    trial_user = _user(db_session, "TrialU", plex_email="trialu@example.com")
+    _sub(db_session, trial_user, _plan(db_session, "trial"), 1)
+    ff_user = _user(db_session, "FfU", plex_email="ffu@example.com")
+    _sub(db_session, ff_user, _plan(db_session, "family_friends"), 1)
+    assert notif.send_payment_links(db_session) == 0
+
+
+def test_send_payment_links_reuses_existing_pending_renewal(db_session, monkeypatch):
+    import app.services.stripe_service as stripe_service
+    from app.services import subscriptions as sub_svc
+
+    _enable_stripe(db_session, days_before="3")
+    calls = {"n": 0}
+
+    def _create(**kw):
+        calls["n"] += 1
+        return {"id": "plink_y", "url": "https://buy.stripe.com/plink_y"}
+
+    monkeypatch.setattr(stripe_service, "create_payment_link", _create)
+    user = _user(db_session, "AlreadyPending", plex_email="pending@example.com")
+    sub = _sub(db_session, user, _plan(db_session, "bronze"), 1)
+    sub_svc.create_renewal(db_session, sub, actor_id=None, collected_by=None)
+
+    notif.send_payment_links(db_session)
+    renewals = db_session.exec(
+        select(Renewal).where(Renewal.subscription_id == sub.id)
+    ).all()
+    assert len(renewals) == 1  # no duplicate renewal
+    assert calls["n"] == 1

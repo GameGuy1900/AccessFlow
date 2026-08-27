@@ -30,6 +30,7 @@ TYPES: dict[str, list[str]] = {
     "manager_overdue": ["name", "user_name", "plan_name", "expiry_date", "amount_eur"],
     "manager_digest": ["name", "items", "count", "window_days", "total_eur"],
     "welcome": ["name", "plan_name", "expiry_date", "public_url", "telegram_link"],
+    "payment_link": ["name", "plan_name", "expiry_date", "days", "amount_eur", "payment_url"],
 }
 
 # Sample context to validate/preview a template without real data.
@@ -44,6 +45,7 @@ SAMPLE_CTX = {
     "suspended": False,
     "public_url": "https://seerr.example.com",
     "telegram_link": "https://t.me/mybot?start=abc123",
+    "payment_url": "https://buy.stripe.com/test_abc123",
     "items": [
         {"user_name": "Mario Rossi", "plan_name": "Bronze",
          "expiry_date": "2026-07-22", "days_left": 3, "amount_eur": "5.00"},
@@ -270,6 +272,31 @@ DEFAULTS: dict[tuple[str, str], dict[str, str]] = {
         "🎉 Hi {{ name|tg }}! Your *{{ plan_name|tg }}* is active "
         "\\(expires: {{ expiry_date|tg }}\\)\\."
         "{% if public_url %}\nRequests: {{ public_url|tg }}{% endif %}",
+    ),
+    # ---- payment_link (auto-sent Stripe link, X days before expiry) ----
+    ("payment_link", "email_subject"): _d(
+        "Rinnova {{ plan_name }} — scade tra {{ days }} giorni",
+        "Renew {{ plan_name }} — expires in {{ days }} day(s)",
+    ),
+    ("payment_link", "email_html"): _d(
+        "<p>Ciao {{ name|e }},</p>"
+        "<p>il tuo abbonamento <strong>{{ plan_name|e }}</strong> scade il "
+        "<strong>{{ expiry_date }}</strong> (tra {{ days }} giorni).</p>"
+        "<p>Puoi rinnovare subito online (<strong>{{ amount_eur|money }}</strong>): "
+        "<a href=\"{{ payment_url }}\">{{ payment_url }}</a></p>",
+        "<p>Hello {{ name|e }},</p>"
+        "<p>your <strong>{{ plan_name|e }}</strong> subscription expires on "
+        "<strong>{{ expiry_date }}</strong> (in {{ days }} day(s)).</p>"
+        "<p>You can renew online now (<strong>{{ amount_eur|money }}</strong>): "
+        "<a href=\"{{ payment_url }}\">{{ payment_url }}</a></p>",
+    ),
+    ("payment_link", "telegram"): _d(
+        "💳 Ciao {{ name|tg }}! Il tuo *{{ plan_name|tg }}* scade il "
+        "{{ expiry_date|tg }} \\(tra {{ days }}g\\)\\. Rinnova online "
+        "\\({{ amount_eur|tgmoney }}\\): {{ payment_url|tg }}",
+        "💳 Hi {{ name|tg }}! Your *{{ plan_name|tg }}* expires on "
+        "{{ expiry_date|tg }} \\(in {{ days }}d\\)\\. Renew online "
+        "\\({{ amount_eur|tgmoney }}\\): {{ payment_url|tg }}",
     ),
 }
 

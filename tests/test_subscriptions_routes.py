@@ -296,3 +296,76 @@ def test_subscription_detail_no_delete_for_inactive_target(client, db_session, l
     resp = client.get(f"/users/{target.id}/subscription")
     assert resp.status_code == 200
     assert f'action="/users/{target.id}/delete"' not in resp.text
+
+
+# ---- Stripe payment link on subscriptions ----
+
+def _enable_stripe(session):
+    from app.services import settings_store
+
+    settings_store.set_value(session, "stripe_secret_key", "sk_test_1")
+    settings_store.set_value(session, "stripe_enabled", "true")
+
+
+def test_create_stripe_link_creates_renewal_and_link(client, db_session, login_as, monkeypatch):
+    import app.services.stripe_service as stripe_service
+
+    _enable_stripe(db_session)
+    admin = _mk(db_session, Role.admin, "StripeAdmin")
+    user = _mk(db_session, Role.user, "StripeUser", manager_id=admin.id)
+    bronze = _plan(db_session, "bronze")
+    sub = svc.create_subscription(db_session, user, bronze)
+
+    monkeypatch.setattr(
+        stripe_service, "create_payment_link",
+        lambda **kw: {"id": "plink_2", "url": "https://buy.stripe.com/plink_2"},
+    )
+    login_as(client, admin.id)
+    resp = client.post(f"/subscriptions/{sub.id}/stripe-link", follow_redirects=False)
+    assert resp.status_code == 303
+    db_session.commit()
+    r = db_session.exec(
+        select(Renewal).where(Renewal.subscription_id == sub.id)
+    ).one()
+    assert r.status == RenewalStatus.pending
+    assert r.stripe_payment_link_id == "plink_2"
+    assert r.stripe_payment_link_url == "https://buy.stripe.com/plink_2"
+
+
+def test_create_stripe_link_reuses_existing_pending_renewal(client, db_session, login_as, monkeypatch):
+    import app.services.stripe_service as stripe_service
+
+    _enable_stripe(db_session)
+    admin = _mk(db_session, Role.admin, "StripeAdmin2")
+    user = _mk(db_session, Role.user, "StripeUser2", manager_id=admin.id)
+    bronze = _plan(db_session, "bronze")
+    sub = svc.create_subscription(db_session, user, bronze)
+    existing = svc.create_renewal(db_session, sub, actor_id=admin.id, collected_by=admin.id)
+
+    calls = {"n": 0}
+
+    def _create(**kw):
+        calls["n"] += 1
+        return {"id": "plink_3", "url": "https://buy.stripe.com/plink_3"}
+
+    monkeypatch.setattr(stripe_service, "create_payment_link", _create)
+    login_as(client, admin.id)
+    client.post(f"/subscriptions/{sub.id}/stripe-link", follow_redirects=False)
+    client.post(f"/subscriptions/{sub.id}/stripe-link", follow_redirects=False)
+    db_session.commit()
+    renewals = db_session.exec(
+        select(Renewal).where(Renewal.subscription_id == sub.id)
+    ).all()
+    assert len(renewals) == 1  # no duplicate renewal created
+    assert renewals[0].id == existing.id
+    assert calls["n"] == 1  # link generated once, reused on the second call
+
+
+def test_create_stripe_link_disabled(client, db_session, login_as):
+    admin = _mk(db_session, Role.admin, "StripeAdmin3")
+    user = _mk(db_session, Role.user, "StripeUser3", manager_id=admin.id)
+    bronze = _plan(db_session, "bronze")
+    sub = svc.create_subscription(db_session, user, bronze)
+    login_as(client, admin.id)
+    resp = client.post(f"/subscriptions/{sub.id}/stripe-link", follow_redirects=False)
+    assert resp.status_code == 400
