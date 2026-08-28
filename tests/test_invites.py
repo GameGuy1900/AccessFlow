@@ -264,6 +264,42 @@ def test_create_invite_stripe_link_rejects_unpayable_plan(client, db_session, lo
     assert resp.status_code == 400
 
 
+def test_create_invite_stripe_link_emails_the_invitee(client, db_session, login_as, monkeypatch):
+    import app.services.mail_service as mail_service
+    import app.services.stripe_service as stripe_service
+
+    _enable_stripe(db_session)
+    admin = _mk(db_session, Role.admin, "PayAdmin4")
+    bronze = _plan(db_session, "bronze")
+    inv = Invite(
+        email="paymail@example.com", real_name="Pay Mail", plan_id=bronze.id,
+        token="t-paymail",
+    )
+    db_session.add(inv)
+    db_session.commit()
+    db_session.refresh(inv)
+
+    monkeypatch.setattr(
+        stripe_service, "create_payment_link",
+        lambda **kw: {"id": "plink_4", "url": "https://buy.stripe.com/plink_4"},
+    )
+    sent = []
+    monkeypatch.setattr(
+        mail_service, "send_email",
+        lambda to, subj, body, html=None: sent.append((to, subj, html)) or True,
+    )
+    login_as(client, admin.id)
+    client.post(f"/invites/{inv.id}/stripe-link", follow_redirects=False)
+    assert len(sent) == 1
+    to, subj, html = sent[0]
+    assert to == "paymail@example.com"
+    assert "https://buy.stripe.com/plink_4" in html
+
+    # A second click reuses the existing link -> no re-send.
+    client.post(f"/invites/{inv.id}/stripe-link", follow_redirects=False)
+    assert len(sent) == 1
+
+
 def test_create_invite_stripe_link_disabled(client, db_session, login_as):
     admin = _mk(db_session, Role.admin, "PayAdmin3")
     bronze = _plan(db_session, "bronze")

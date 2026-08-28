@@ -369,3 +369,40 @@ def test_create_stripe_link_disabled(client, db_session, login_as):
     login_as(client, admin.id)
     resp = client.post(f"/subscriptions/{sub.id}/stripe-link", follow_redirects=False)
     assert resp.status_code == 400
+
+
+def test_create_stripe_link_emails_the_user_once(client, db_session, login_as, monkeypatch):
+    import app.services.mail_service as mail_service
+    import app.services.stripe_service as stripe_service
+
+    _enable_stripe(db_session)
+    admin = _mk(db_session, Role.admin, "StripeAdmin4")
+    user = AppUser(
+        role=Role.user, real_name="StripeUser4", manager_id=admin.id,
+        notify_email="stripeuser4@example.com",
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    bronze = _plan(db_session, "bronze")
+    sub = svc.create_subscription(db_session, user, bronze)
+
+    monkeypatch.setattr(
+        stripe_service, "create_payment_link",
+        lambda **kw: {"id": "plink_5", "url": "https://buy.stripe.com/plink_5"},
+    )
+    sent = []
+    monkeypatch.setattr(
+        mail_service, "send_email",
+        lambda to, subj, body, html=None: sent.append((to, subj, html)) or True,
+    )
+    login_as(client, admin.id)
+    client.post(f"/subscriptions/{sub.id}/stripe-link", follow_redirects=False)
+    assert len(sent) == 1
+    to, subj, html = sent[0]
+    assert to == "stripeuser4@example.com"
+    assert "https://buy.stripe.com/plink_5" in html
+
+    # A second click reuses the existing pending renewal/link -> no re-send.
+    client.post(f"/subscriptions/{sub.id}/stripe-link", follow_redirects=False)
+    assert len(sent) == 1

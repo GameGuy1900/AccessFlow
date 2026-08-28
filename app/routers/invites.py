@@ -12,7 +12,7 @@ from app.i18n import gettext as _
 from app.models import AppUser, Invite, InviteStatus, Plan, Role, utcnow
 from app.permissions import Capability, outranks
 from app import runtime_config
-from app.services import audit, plex_service, stripe_service
+from app.services import audit, notifications, plex_service, stripe_service
 from app.services import subscriptions as sub_svc
 from app.services import users as users_svc
 from app.templating import templates
@@ -185,6 +185,7 @@ def create_invite_stripe_link(
         invite.stripe_payment_link_url = link["url"]
         session.add(invite)
         session.commit()
+        notifications.send_invite_payment_link_email(session, invite, plan, invite.stripe_payment_link_url)
 
     audit.record(session, viewer.id, "create_invite_stripe_link", "invite", invite_id)
     return RedirectResponse("/invites", status_code=303)

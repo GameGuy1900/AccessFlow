@@ -398,6 +398,10 @@ def create_stripe_link(
         renewal.stripe_payment_link_url = link["url"]
         session.add(renewal)
         session.commit()
+        if plan is not None:
+            notifications.send_payment_link_email_now(
+                session, target, plan, sub, renewal.id, renewal.stripe_payment_link_url,
+            )
 
     audit.record(
         session, viewer.id, "create_stripe_link", "renewal", renewal.id,

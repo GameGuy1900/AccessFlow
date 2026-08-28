@@ -31,6 +31,7 @@ TYPES: dict[str, list[str]] = {
     "manager_digest": ["name", "items", "count", "window_days", "total_eur"],
     "welcome": ["name", "plan_name", "expiry_date", "public_url", "telegram_link"],
     "payment_link": ["name", "plan_name", "expiry_date", "days", "amount_eur", "payment_url"],
+    "invite_payment_link": ["name", "plan_name", "amount_eur", "payment_url"],
 }
 
 # Sample context to validate/preview a template without real data.
@@ -106,6 +107,15 @@ def _html_to_text(html: str) -> str:
 # ---------------------------------------------------------------- defaults
 def _d(it: str, en: str) -> dict:
     return {"it": it, "en": en}
+
+
+# Inline-styled CTA used by both payment-link emails — kept as a single style
+# attribute (not a stylesheet) since these strings are plain HTML rendered
+# straight into the email body, with no <head> for a <style> block.
+_PAY_BTN_STYLE = (
+    "display:inline-block;padding:12px 24px;background:#5469d4;color:#ffffff;"
+    "text-decoration:none;border-radius:6px;font-weight:600"
+)
 
 
 DEFAULTS: dict[tuple[str, str], dict[str, str]] = {
@@ -282,13 +292,17 @@ DEFAULTS: dict[tuple[str, str], dict[str, str]] = {
         "<p>Ciao {{ name|e }},</p>"
         "<p>il tuo abbonamento <strong>{{ plan_name|e }}</strong> scade il "
         "<strong>{{ expiry_date }}</strong> (tra {{ days }} giorni).</p>"
-        "<p>Puoi rinnovare subito online (<strong>{{ amount_eur|money }}</strong>): "
-        "<a href=\"{{ payment_url }}\">{{ payment_url }}</a></p>",
+        "<p>Puoi rinnovare subito online per <strong>{{ amount_eur|money }}</strong>:</p>"
+        f"<p><a href=\"{{{{ payment_url }}}}\" style=\"{_PAY_BTN_STYLE}\">Rinnova ora</a></p>"
+        "<p style=\"color:#6b7280;font-size:13px\">Se il pulsante non funziona, copia questo link: "
+        "{{ payment_url }}</p>",
         "<p>Hello {{ name|e }},</p>"
         "<p>your <strong>{{ plan_name|e }}</strong> subscription expires on "
         "<strong>{{ expiry_date }}</strong> (in {{ days }} day(s)).</p>"
-        "<p>You can renew online now (<strong>{{ amount_eur|money }}</strong>): "
-        "<a href=\"{{ payment_url }}\">{{ payment_url }}</a></p>",
+        "<p>You can renew online now for <strong>{{ amount_eur|money }}</strong>:</p>"
+        f"<p><a href=\"{{{{ payment_url }}}}\" style=\"{_PAY_BTN_STYLE}\">Renew now</a></p>"
+        "<p style=\"color:#6b7280;font-size:13px\">If the button doesn't work, copy this link: "
+        "{{ payment_url }}</p>",
     ),
     ("payment_link", "telegram"): _d(
         "💳 Ciao {{ name|tg }}! Il tuo *{{ plan_name|tg }}* scade il "
@@ -297,6 +311,28 @@ DEFAULTS: dict[tuple[str, str], dict[str, str]] = {
         "💳 Hi {{ name|tg }}! Your *{{ plan_name|tg }}* expires on "
         "{{ expiry_date|tg }} \\(in {{ days }}d\\)\\. Renew online "
         "\\({{ amount_eur|tgmoney }}\\): {{ payment_url|tg }}",
+    ),
+    # ---- invite_payment_link (sent once, right when an admin generates a
+    # payment link for a pending invite — recipient has no account yet) ----
+    ("invite_payment_link", "email_subject"): _d(
+        "Completa la tua iscrizione a {{ plan_name }}",
+        "Complete your {{ plan_name }} sign-up",
+    ),
+    ("invite_payment_link", "email_html"): _d(
+        "<p>Ciao {{ name|e }},</p>"
+        "<p>sei stato invitato ad abbonarti al piano <strong>{{ plan_name|e }}</strong> "
+        "({{ amount_eur|money }}).</p>"
+        "<p>Completa il pagamento per attivare il tuo accesso:</p>"
+        f"<p><a href=\"{{{{ payment_url }}}}\" style=\"{_PAY_BTN_STYLE}\">Paga ora</a></p>"
+        "<p style=\"color:#6b7280;font-size:13px\">Se il pulsante non funziona, copia questo link: "
+        "{{ payment_url }}</p>",
+        "<p>Hello {{ name|e }},</p>"
+        "<p>you've been invited to subscribe to the <strong>{{ plan_name|e }}</strong> plan "
+        "({{ amount_eur|money }}).</p>"
+        "<p>Complete payment to activate your access:</p>"
+        f"<p><a href=\"{{{{ payment_url }}}}\" style=\"{_PAY_BTN_STYLE}\">Pay now</a></p>"
+        "<p style=\"color:#6b7280;font-size:13px\">If the button doesn't work, copy this link: "
+        "{{ payment_url }}</p>",
     ),
 }
 

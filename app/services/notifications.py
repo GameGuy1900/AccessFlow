@@ -468,6 +468,44 @@ def send_payment_links(session: Session, today: datetime | None = None) -> int:
     return sent
 
 
+def send_payment_link_email_now(
+    session: Session, user: AppUser, plan: Plan, sub: Subscription,
+    renewal_id: int, payment_url: str,
+) -> bool:
+    """Email a just-created Stripe payment link immediately — an admin clicked
+    "Create payment link" on the subscription page, rather than waiting for
+    the auto-send threshold. Shares send_payment_links()'s dedup key so the
+    two triggers can never double-email the same renewal."""
+    days_left = (sub.expiry_at.date() - utcnow().date()).days if sub.expiry_at else 0
+    ctx = _payment_link_ctx(user, plan, sub, days_left, payment_url)
+    return _send_email(
+        session, recipient=user, sub_id=sub.id, ntype=NotificationType.payment_link,
+        type_="payment_link", dedup_key=f"paylink:{renewal_id}:email", ctx=ctx,
+    )
+
+
+def send_invite_payment_link_email(session: Session, invite, plan: Plan, payment_url: str) -> bool:
+    """One-shot email to a prospective invitee with their new Stripe payment
+    link. No AppUser exists yet for them, so this bypasses the per-user
+    notify prefs / NotificationLog dedup that post-signup templates use —
+    the caller already guards this to run only once, right when the link is
+    first created."""
+    from app.config import get_settings
+
+    ctx = {
+        "name": invite.real_name,
+        "plan_name": plan.name,
+        "amount_eur": _amount_eur(plan),
+        "payment_url": payment_url,
+    }
+    subject, html, text = render_email(
+        session, "invite_payment_link", get_settings().default_locale, ctx
+    )
+    if not (subject or html or text):
+        return False
+    return mail_service.send_email(invite.email, subject, text, html=html or None)
+
+
 # ---- Retention: prune old notification_log rows (admin-configured) ----
 
 def prune_old_notifications(session: Session, today: datetime | None = None) -> int:
