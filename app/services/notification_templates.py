@@ -284,18 +284,39 @@ DEFAULTS: dict[tuple[str, str], dict[str, str]] = {
         "{% if public_url %}\nRequests: {{ public_url|tg }}{% endif %}",
     ),
     # ---- payment_link (auto-sent Stripe link, X days before expiry) ----
+    # Bilingual NL/EN stacked in one email (Jason's clients read Dutch or
+    # English, not Italian) — the "it" and "en" slots hold identical content
+    # so the message is the same regardless of which locale resolves.
     ("payment_link", "email_subject"): _d(
-        "Rinnova {{ plan_name }} — scade tra {{ days }} giorni",
-        "Renew {{ plan_name }} — expires in {{ days }} day(s)",
+        "Verleng {{ plan_name }} — verloopt over {{ days }} dagen "
+        "/ Renew {{ plan_name }} — expires in {{ days }} day(s)",
+        "Verleng {{ plan_name }} — verloopt over {{ days }} dagen "
+        "/ Renew {{ plan_name }} — expires in {{ days }} day(s)",
     ),
     ("payment_link", "email_html"): _d(
-        "<p>Ciao {{ name|e }},</p>"
-        "<p>il tuo abbonamento <strong>{{ plan_name|e }}</strong> scade il "
-        "<strong>{{ expiry_date }}</strong> (tra {{ days }} giorni).</p>"
-        "<p>Puoi rinnovare subito online per <strong>{{ amount_eur|money }}</strong>:</p>"
-        f"<p><a href=\"{{{{ payment_url }}}}\" style=\"{_PAY_BTN_STYLE}\">Rinnova ora</a></p>"
-        "<p style=\"color:#6b7280;font-size:13px\">Se il pulsante non funziona, copia questo link: "
+        "<p>Hallo {{ name|e }},</p>"
+        "<p>je abonnement <strong>{{ plan_name|e }}</strong> verloopt op "
+        "<strong>{{ expiry_date }}</strong> (over {{ days }} dagen).</p>"
+        "<p>Je kunt nu online verlengen voor <strong>{{ amount_eur|money }}</strong>:</p>"
+        f"<p><a href=\"{{{{ payment_url }}}}\" style=\"{_PAY_BTN_STYLE}\">Nu verlengen</a></p>"
+        "<p style=\"color:#6b7280;font-size:13px\">Werkt de knop niet? Kopieer deze link: "
+        "{{ payment_url }}</p>"
+        "<hr style=\"border:none;border-top:1px solid #e5e7eb;margin:20px 0\">"
+        "<p>Hello {{ name|e }},</p>"
+        "<p>your <strong>{{ plan_name|e }}</strong> subscription expires on "
+        "<strong>{{ expiry_date }}</strong> (in {{ days }} day(s)).</p>"
+        "<p>You can renew online now for <strong>{{ amount_eur|money }}</strong>:</p>"
+        f"<p><a href=\"{{{{ payment_url }}}}\" style=\"{_PAY_BTN_STYLE}\">Renew now</a></p>"
+        "<p style=\"color:#6b7280;font-size:13px\">If the button doesn't work, copy this link: "
         "{{ payment_url }}</p>",
+        "<p>Hallo {{ name|e }},</p>"
+        "<p>je abonnement <strong>{{ plan_name|e }}</strong> verloopt op "
+        "<strong>{{ expiry_date }}</strong> (over {{ days }} dagen).</p>"
+        "<p>Je kunt nu online verlengen voor <strong>{{ amount_eur|money }}</strong>:</p>"
+        f"<p><a href=\"{{{{ payment_url }}}}\" style=\"{_PAY_BTN_STYLE}\">Nu verlengen</a></p>"
+        "<p style=\"color:#6b7280;font-size:13px\">Werkt de knop niet? Kopieer deze link: "
+        "{{ payment_url }}</p>"
+        "<hr style=\"border:none;border-top:1px solid #e5e7eb;margin:20px 0\">"
         "<p>Hello {{ name|e }},</p>"
         "<p>your <strong>{{ plan_name|e }}</strong> subscription expires on "
         "<strong>{{ expiry_date }}</strong> (in {{ days }} day(s)).</p>"
@@ -314,18 +335,37 @@ DEFAULTS: dict[tuple[str, str], dict[str, str]] = {
     ),
     # ---- invite_payment_link (sent once, right when an admin generates a
     # payment link for a pending invite — recipient has no account yet) ----
+    # Bilingual NL/EN stacked in one email, same reasoning as payment_link above.
     ("invite_payment_link", "email_subject"): _d(
-        "Completa la tua iscrizione a {{ plan_name }}",
-        "Complete your {{ plan_name }} sign-up",
+        "Rond je inschrijving voor {{ plan_name }} af "
+        "/ Complete your {{ plan_name }} sign-up",
+        "Rond je inschrijving voor {{ plan_name }} af "
+        "/ Complete your {{ plan_name }} sign-up",
     ),
     ("invite_payment_link", "email_html"): _d(
-        "<p>Ciao {{ name|e }},</p>"
-        "<p>sei stato invitato ad abbonarti al piano <strong>{{ plan_name|e }}</strong> "
+        "<p>Hallo {{ name|e }},</p>"
+        "<p>je bent uitgenodigd om je te abonneren op het plan "
+        "<strong>{{ plan_name|e }}</strong> ({{ amount_eur|money }}).</p>"
+        "<p>Rond de betaling af om je toegang te activeren:</p>"
+        f"<p><a href=\"{{{{ payment_url }}}}\" style=\"{_PAY_BTN_STYLE}\">Nu betalen</a></p>"
+        "<p style=\"color:#6b7280;font-size:13px\">Werkt de knop niet? Kopieer deze link: "
+        "{{ payment_url }}</p>"
+        "<hr style=\"border:none;border-top:1px solid #e5e7eb;margin:20px 0\">"
+        "<p>Hello {{ name|e }},</p>"
+        "<p>you've been invited to subscribe to the <strong>{{ plan_name|e }}</strong> plan "
         "({{ amount_eur|money }}).</p>"
-        "<p>Completa il pagamento per attivare il tuo accesso:</p>"
-        f"<p><a href=\"{{{{ payment_url }}}}\" style=\"{_PAY_BTN_STYLE}\">Paga ora</a></p>"
-        "<p style=\"color:#6b7280;font-size:13px\">Se il pulsante non funziona, copia questo link: "
+        "<p>Complete payment to activate your access:</p>"
+        f"<p><a href=\"{{{{ payment_url }}}}\" style=\"{_PAY_BTN_STYLE}\">Pay now</a></p>"
+        "<p style=\"color:#6b7280;font-size:13px\">If the button doesn't work, copy this link: "
         "{{ payment_url }}</p>",
+        "<p>Hallo {{ name|e }},</p>"
+        "<p>je bent uitgenodigd om je te abonneren op het plan "
+        "<strong>{{ plan_name|e }}</strong> ({{ amount_eur|money }}).</p>"
+        "<p>Rond de betaling af om je toegang te activeren:</p>"
+        f"<p><a href=\"{{{{ payment_url }}}}\" style=\"{_PAY_BTN_STYLE}\">Nu betalen</a></p>"
+        "<p style=\"color:#6b7280;font-size:13px\">Werkt de knop niet? Kopieer deze link: "
+        "{{ payment_url }}</p>"
+        "<hr style=\"border:none;border-top:1px solid #e5e7eb;margin:20px 0\">"
         "<p>Hello {{ name|e }},</p>"
         "<p>you've been invited to subscribe to the <strong>{{ plan_name|e }}</strong> plan "
         "({{ amount_eur|money }}).</p>"
